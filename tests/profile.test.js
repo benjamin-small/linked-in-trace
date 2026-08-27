@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { profileSlugFromUrl, sanitizeSlug } from "../lib/profile.js";
+import { profileSlugFromUrl, sanitizeSlug, localDateString, captureFilename } from "../lib/profile.js";
 
 describe("profileSlugFromUrl", () => {
   it("extracts the slug from a standard profile URL", () => {
@@ -90,5 +90,29 @@ describe("sanitizeSlug", () => {
 
   it("falls back to 'profile' when nothing survives cleaning", () => {
     expect(sanitizeSlug("<<>>")).toBe("profile");
+  });
+});
+
+describe("localDateString", () => {
+  it("zero-pads month and day", () => {
+    expect(localDateString(new Date(2026, 0, 5))).toBe("2026-01-05");
+  });
+
+  it("handles end-of-year dates", () => {
+    expect(localDateString(new Date(2026, 11, 31))).toBe("2026-12-31");
+  });
+});
+
+describe("captureFilename", () => {
+  it("builds the full relative download path", () => {
+    expect(captureFilename("jane-doe", new Date(2026, 7, 27))).toBe(
+      "linkedin-profiles/jane-doe_2026-08-27.mhtml"
+    );
+  });
+
+  it("sanitizes the slug (decoding percent-escapes)", () => {
+    expect(captureFilename("%C3%A9lodie-durand", new Date(2026, 7, 27))).toBe(
+      "linkedin-profiles/élodie-durand_2026-08-27.mhtml"
+    );
   });
 });
