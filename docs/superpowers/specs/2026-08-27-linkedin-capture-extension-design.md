@@ -1,23 +1,24 @@
-# linked-in-trace — LinkedIn Profile → PDF Chrome Extension
+# linked-in-trace — LinkedIn Profile → MHTML Chrome Extension
 
 **Date:** 2026-08-27
-**Status:** Approved design
+**Status:** Approved design (revised same day: MHTML via `pageCapture` replaces
+PDF via `debugger`, per user review)
 
 ## Purpose
 
 A personal-archive Chrome extension. Every time the user visits a LinkedIn
 profile page in their own browser, the extension saves that profile as a
-searchable PDF to disk, silently and automatically. It captures only pages the
-user personally navigates to; it makes no requests of its own beyond what the
-user's normal browsing (including scrolling) would trigger.
+single-file MHTML snapshot to disk, silently and automatically. It captures
+only pages the user personally navigates to; it makes no requests of its own
+beyond what the user's normal browsing (including scrolling) would trigger.
 
 ## Decisions (settled with the user)
 
 | Question | Decision |
 |---|---|
-| PDF type | Real searchable/text PDF via `chrome.debugger` + `Page.printToPDF` (accepting the brief "debugging this browser" banner during capture) |
+| Capture format | Single-file MHTML via `chrome.pageCapture.saveAsMHTML`. No debugger attach, so no "debugging this browser" banner. Full page text is preserved and searchable in-browser. Accepted trade-off: `.mhtml` opens mainly in Chromium browsers (Chrome/Edge) — less portable than PDF. *(Revision of the original PDF/debugger decision.)* |
 | Save location | `~/Downloads/linkedin-profiles/` via `chrome.downloads` (extensions cannot write outside Downloads without a native host — out of scope) |
-| Capture depth | Auto-scroll the page first so lazy-loaded sections render, then capture |
+| Capture depth | Auto-scroll the page first so lazy-loaded sections (and their images) render, then capture |
 | Revisit policy | Once per profile per calendar day (local time); failed captures do not count and retry on next visit |
 
 ## Architecture
@@ -30,7 +31,7 @@ everything; a scroll routine is injected on demand with `chrome.scripting`
 ### manifest.json
 
 - `manifest_version`: 3
-- `permissions`: `debugger`, `downloads`, `storage`, `scripting`, `webNavigation`
+- `permissions`: `pageCapture`, `downloads`, `storage`, `scripting`, `webNavigation`
 - `host_permissions`: `https://*.linkedin.com/*` (covers `www.` and regional
   subdomains like `de.linkedin.com`)
 - `background`: `{ "service_worker": "background.js", "type": "module" }`
@@ -52,7 +53,7 @@ everything; a scroll routine is injected on demand with `chrome.scripting`
      `-`, runs of `-` collapsed, trimmed to 100 chars. Unicode letters are
      kept (LinkedIn slugs can contain them; filesystems and
      `chrome.downloads` handle them).
-   - `pdfFilename(slug, date)` → `linkedin-profiles/<slug>_YYYY-MM-DD.pdf`.
+   - `captureFilename(slug, date)` → `linkedin-profiles/<slug>_YYYY-MM-DD.mhtml`.
    - `localDateString(date)` → `YYYY-MM-DD` in local time.
    - `shouldCapture(slug, savedMap, todayString)` → boolean (dedup rule).
 
@@ -75,16 +76,16 @@ For each event:
 3. **Auto-scroll.** `chrome.scripting.executeScript` injects an async
    function: step down by ~80% of the viewport every ~300 ms until the
    scroll height stops growing and the bottom is reached, hard cap 30 s,
-   then restore the original scroll position. Expanding "see more" buttons
-   is out of scope.
+   then restore the original scroll position. This is what forces lazy
+   sections and images into the DOM so the MHTML contains them. Expanding
+   "see more" buttons is out of scope.
 4. **Settle again** ~1 s; re-verify the slug.
-5. **Print.** `chrome.debugger.attach(tab, "1.3")` →
-   `Page.printToPDF { printBackground: true, paperWidth: 8.5, paperHeight: 11, margins ≈ 0.4in }`
-   → base64 result → `chrome.debugger.detach` in a `finally` (the debugger
-   must never stay attached). This is the moment the banner shows.
-6. **Save.** `chrome.downloads.download` with
-   `url: data:application/pdf;base64,...`,
-   `filename: linkedin-profiles/<slug>_<date>.pdf`,
+5. **Capture.** `chrome.pageCapture.saveAsMHTML({ tabId })` → MHTML `Blob`
+   of the page as currently rendered. No debugger, no banner.
+6. **Save.** MV3 service workers cannot use `URL.createObjectURL`, so:
+   `blob.arrayBuffer()` → chunked base64 encoding → `data:` URL →
+   `chrome.downloads.download` with
+   `filename: linkedin-profiles/<slug>_<date>.mhtml`,
    `saveAs: false`, `conflictAction: 'uniquify'`.
 7. **Record.** On success only: write `slug → date` into
    `chrome.storage.local` and flash a per-tab badge `✓` for ~3 s. On any
@@ -106,13 +107,14 @@ For each event:
 ## Error handling
 
 - Whole pipeline wrapped per-capture; any throw → badge `✗`, log, release
-  in-flight guard, detach debugger if attached.
+  in-flight guard.
 - Navigation away or tab close mid-capture aborts that capture; nothing is
   recorded.
 - If LinkedIn serves a login wall or error page at a profile URL, that is
   what gets captured — content detection is a non-goal.
-- Known risk: very large PDFs as `data:` URLs. Profile PDFs are typically
-  well under 5 MB, which is fine. If this ever fails in practice, the
+- Known risk: MHTML inlines every image, so files run larger than PDFs
+  (often several MB), and they travel through a base64 `data:` URL to the
+  downloads API. If very large captures ever fail in practice, the
   documented fallback is an offscreen document creating a blob URL — not
   built in v1.
 
@@ -124,7 +126,7 @@ background.js
 lib/profile.js
 tests/profile.test.js
 package.json          # dev-only: vitest
-docs/superpowers/specs/2026-08-27-linkedin-pdf-extension-design.md
+docs/superpowers/specs/2026-08-27-linkedin-capture-extension-design.md
 ```
 
 ## Testing
@@ -132,16 +134,19 @@ docs/superpowers/specs/2026-08-27-linkedin-pdf-extension-design.md
 - **Unit (vitest):** `lib/profile.js` — URL variants (trailing slash, query
   string, hash, regional hosts, percent-encoded/unicode slugs, detail and
   overlay subpaths rejected, non-profile paths rejected), slug sanitization
-  edge cases, filename format, dedup logic across day boundaries.
-- **Manual E2E checklist (load unpacked):** first visit saves a PDF to
-  `Downloads/linkedin-profiles/` with correct name and searchable text;
-  same-day revisit does not save; SPA navigation between two profiles saves
-  both exactly once; toggle OFF suppresses capture and shows badge; navigating
-  away mid-scroll aborts cleanly; PDF includes below-the-fold sections.
+  edge cases, filename format (`.mhtml`), dedup logic across day boundaries.
+- **Manual E2E checklist (load unpacked):** first visit saves an `.mhtml`
+  file to `Downloads/linkedin-profiles/` with the correct name; opening it
+  in Chrome shows the full profile including below-the-fold sections and
+  images, with text findable via Ctrl+F; same-day revisit does not save;
+  SPA navigation between two profiles saves both exactly once; toggle OFF
+  suppresses capture and shows badge; navigating away mid-scroll aborts
+  cleanly; no debugger banner appears at any point.
 
 ## Out of scope (v1)
 
-Arbitrary save directories (native messaging host), expanding "see
-more"/collapsed sections, capturing profile detail subpages, retry queues,
-options UI, notifications, Firefox/Safari ports, custom icons, any scraping
-or crawling of pages the user did not visit.
+PDF export (open the MHTML in Chrome and print if ever needed),
+debugger-based capture, arbitrary save directories (native messaging host),
+expanding "see more"/collapsed sections, capturing profile detail subpages,
+retry queues, options UI, notifications, Firefox/Safari ports, custom icons,
+any scraping or crawling of pages the user did not visit.
