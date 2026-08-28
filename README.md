@@ -24,16 +24,20 @@ look at, onto your own computer.
 
 You need Google Chrome (any version from the last few years).
 
-1. Put the **linked-in-trace** folder somewhere permanent on your computer,
+1. Download the newest version from
+   <https://github.com/benjamin-small/linked-in-trace/releases/latest> —
+   under **Assets**, click the file ending in `.zip`.
+2. Unzip it (usually just double-click the downloaded file). You get a
+   folder called **linked-in-trace**. Move that folder somewhere permanent,
    like your Documents folder. **Important: don't move or delete this folder
    afterwards** — Chrome runs the add-on straight from it.
-2. Open Chrome. Click in the address bar, type `chrome://extensions` and
+3. Open Chrome. Click in the address bar, type `chrome://extensions` and
    press Enter.
-3. In the top-right corner, turn ON the switch called **Developer mode**.
-4. Three new buttons appear top-left. Click **Load unpacked**.
-5. In the window that opens, select the **linked-in-trace** folder and click
+4. In the top-right corner, turn ON the switch called **Developer mode**.
+5. Three new buttons appear top-left. Click **Load unpacked**.
+6. In the window that opens, select the **linked-in-trace** folder and click
    **Select** (or **Open**).
-6. That's it. The add-on now appears in the list. To see its icon all the
+7. That's it. The add-on now appears in the list. To see its icon all the
    time: click the puzzle-piece icon to the right of the address bar, then
    click the pin next to "linked-in-trace".
 
