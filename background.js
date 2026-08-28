@@ -4,6 +4,7 @@ import {
   localDateString,
   shouldCapture,
 } from "./lib/profile.js";
+import { waitForProfileReady } from "./lib/readiness.js";
 
 const BADGE_FLASH_MS = 3000;
 
@@ -46,8 +47,14 @@ async function flashBadge(tabId, text) {
   }
 }
 
-const SETTLE_AFTER_NAV_MS = 1500;
-const SETTLE_AFTER_SCROLL_MS = 1000;
+// Short yield after a navigation event so the SPA route swap can begin
+// before we start watching the DOM.
+const NAV_EVENT_YIELD_MS = 500;
+// Pre-scroll readiness: wait for the profile name (main h1), then a quiet DOM.
+const READY_BEFORE_SCROLL = { selector: "main h1", quietMs: 600, timeoutMs: 12000 };
+// Post-scroll readiness: the scroll just triggered lazy loads; wait for the
+// resulting mutations to finish. No selector — the floor was already met.
+const READY_AFTER_SCROLL = { selector: null, quietMs: 750, timeoutMs: 10000 };
 
 // Absorbs the duplicate events LinkedIn's SPA fires for one navigation.
 // In-memory is sufficient: captures are short-lived relative to worker life.
@@ -83,12 +90,15 @@ async function onProfileNavigation({ tabId, url, frameId }) {
 }
 
 async function captureProfile(tabId, slug) {
-  await sleep(SETTLE_AFTER_NAV_MS);
+  await sleep(NAV_EVENT_YIELD_MS);
+  if (!(await tabStillOnProfile(tabId, slug))) return;
+
+  await waitForReady(tabId, READY_BEFORE_SCROLL);
   if (!(await tabStillOnProfile(tabId, slug))) return;
 
   await chrome.scripting.executeScript({ target: { tabId }, func: autoScrollPage });
 
-  await sleep(SETTLE_AFTER_SCROLL_MS);
+  await waitForReady(tabId, READY_AFTER_SCROLL);
   if (!(await tabStillOnProfile(tabId, slug))) return;
 
   const blob = await chrome.pageCapture.saveAsMHTML({ tabId });
@@ -108,6 +118,19 @@ async function captureProfile(tabId, slug) {
   savedProfiles[slug] = localDateString(now);
   await chrome.storage.local.set({ savedProfiles });
   await flashBadge(tabId, "✓");
+}
+
+// Runs waitForProfileReady inside the page. A timeout is not an error:
+// we log it and capture whatever is there (same policy as login walls).
+async function waitForReady(tabId, opts) {
+  const [injection] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: waitForProfileReady,
+    args: [opts],
+  });
+  if (!injection?.result?.ready) {
+    console.warn(`linked-in-trace: readiness wait timed out on tab ${tabId}; capturing as-is`);
+  }
 }
 
 async function tabStillOnProfile(tabId, slug) {
