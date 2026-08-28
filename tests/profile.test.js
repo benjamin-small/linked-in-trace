@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { profileSlugFromUrl, sanitizeSlug, localDateString, captureFilename } from "../lib/profile.js";
+import { profileSlugFromUrl, sanitizeSlug, localDateString, captureFilename, shouldCapture } from "../lib/profile.js";
 
 describe("profileSlugFromUrl", () => {
   it("extracts the slug from a standard profile URL", () => {
@@ -114,5 +114,27 @@ describe("captureFilename", () => {
     expect(captureFilename("%C3%A9lodie-durand", new Date(2026, 7, 27))).toBe(
       "linkedin-profiles/élodie-durand_2026-08-27.mhtml"
     );
+  });
+});
+
+describe("shouldCapture", () => {
+  it("captures a never-seen profile", () => {
+    expect(shouldCapture("jane-doe", {}, "2026-08-27")).toBe(true);
+  });
+
+  it("skips a profile already saved today", () => {
+    expect(shouldCapture("jane-doe", { "jane-doe": "2026-08-27" }, "2026-08-27")).toBe(false);
+  });
+
+  it("captures again on a later day", () => {
+    expect(shouldCapture("jane-doe", { "jane-doe": "2026-08-26" }, "2026-08-27")).toBe(true);
+  });
+
+  it("tolerates a missing map", () => {
+    expect(shouldCapture("jane-doe", undefined, "2026-08-27")).toBe(true);
+  });
+
+  it("keys on the raw slug, not a sanitized variant", () => {
+    expect(shouldCapture("%C3%A9lodie", { "élodie": "2026-08-27" }, "2026-08-27")).toBe(true);
   });
 });
