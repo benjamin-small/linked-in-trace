@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "linked-in-trace",
+  "version": "1.0.0",
+  "description": "Saves every LinkedIn profile you visit as an MHTML snapshot in Downloads/linkedin-profiles/.",
+  "permissions": ["pageCapture", "downloads", "storage", "scripting", "webNavigation"],
+  "host_permissions": ["https://*.linkedin.com/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_title": "linked-in-trace: click to toggle capture" }
+}
