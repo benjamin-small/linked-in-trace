@@ -36,7 +36,7 @@ async function flashBadge(tabId, text) {
     // clears on the tab's next navigation anyway — cosmetic only.
     setTimeout(async () => {
       try {
-        await chrome.action.setBadgeText({ tabId, text: "" });
+        await chrome.action.setBadgeText({ tabId, text: null });
       } catch {
         // tab gone; nothing to clear
       }
@@ -188,7 +188,7 @@ function waitForDownloadComplete(downloadId, timeoutMs = 30000) {
         cleanup();
         reject(new Error(`download ${downloadId} interrupted`));
       }
-    });
+    }).catch(() => {});
   });
 }
 
