@@ -95,12 +95,13 @@ async function captureProfile(tabId, slug) {
   const dataUrl = await blobToDataUrl(blob);
 
   const now = new Date();
-  await chrome.downloads.download({
+  const downloadId = await chrome.downloads.download({
     url: dataUrl,
     filename: captureFilename(slug, now),
     saveAs: false,
     conflictAction: "uniquify",
   });
+  await waitForDownloadComplete(downloadId);
 
   // Success only: record so failures retry on the next visit.
   const { savedProfiles } = await chrome.storage.local.get({ savedProfiles: {} });
@@ -149,6 +150,46 @@ async function blobToDataUrl(blob) {
     binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
   return `data:application/x-mimearchive;base64,${btoa(binary)}`;
+}
+
+function waitForDownloadComplete(downloadId, timeoutMs = 30000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`download ${downloadId} did not complete within ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    function onChanged(delta) {
+      if (delta.id !== downloadId || !delta.state) return;
+      if (delta.state.current === "complete") {
+        cleanup();
+        resolve();
+      } else if (delta.state.current === "interrupted") {
+        cleanup();
+        reject(new Error(`download ${downloadId} interrupted`));
+      }
+    }
+
+    function cleanup() {
+      clearTimeout(timer);
+      chrome.downloads.onChanged.removeListener(onChanged);
+    }
+
+    chrome.downloads.onChanged.addListener(onChanged);
+
+    // The download may already have finished before the listener attached.
+    chrome.downloads.search({ id: downloadId }).then((results) => {
+      const item = results[0];
+      if (!item) return;
+      if (item.state === "complete") {
+        cleanup();
+        resolve();
+      } else if (item.state === "interrupted") {
+        cleanup();
+        reject(new Error(`download ${downloadId} interrupted`));
+      }
+    });
+  });
 }
 
 function sleep(ms) {
