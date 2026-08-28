@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-27
 **Status:** Approved design (revised same day: MHTML via `pageCapture` replaces
-PDF via `debugger`, per user review)
+PDF via `debugger`, per user review. Revised 2026-08-28: fixed settle delays
+replaced by readiness watches after a real capture froze mid-hydration.)
 
 ## Purpose
 
@@ -18,7 +19,7 @@ beyond what the user's normal browsing (including scrolling) would trigger.
 |---|---|
 | Capture format | Single-file MHTML via `chrome.pageCapture.saveAsMHTML`. No debugger attach, so no "debugging this browser" banner. Full page text is preserved and searchable in-browser. Accepted trade-off: `.mhtml` opens mainly in Chromium browsers (Chrome/Edge) — less portable than PDF. *(Revision of the original PDF/debugger decision.)* |
 | Save location | `~/Downloads/linkedin-profiles/` via `chrome.downloads` (extensions cannot write outside Downloads without a native host — out of scope) |
-| Capture depth | Auto-scroll the page first so lazy-loaded sections (and their images) render, then capture |
+| Capture depth | Watch the page until essential content has loaded (readiness watch, below), auto-scroll so lazy-loaded sections (and their images) render, wait for the resulting updates to finish, then capture. *(Revision of the original fixed-delay settles.)* |
 | Revisit policy | Once per profile per calendar day (local time); failed captures do not count and retry on next visit |
 
 ## Architecture
@@ -56,6 +57,15 @@ everything; a scroll routine is injected on demand with `chrome.scripting`
    - `captureFilename(slug, date)` → `linkedin-profiles/<slug>_YYYY-MM-DD.mhtml`.
    - `localDateString(date)` → `YYYY-MM-DD` in local time.
    - `shouldCapture(slug, savedMap, todayString)` → boolean (dedup rule).
+3. **`lib/readiness.js`** — `waitForProfileReady({selector, quietMs, timeoutMs})`,
+   the readiness watch injected into the page. Optionally waits for an
+   essential element with non-empty text (the profile name, `main h1`), then
+   uses a `MutationObserver` on `<main>` (body fallback) and resolves once no
+   childList/characterData mutations occur for `quietMs` (attributes are
+   ignored — animation class churn must not stall it). Returns
+   `{ready:false}` at `timeoutMs`; capture proceeds anyway (login-wall
+   policy). Fully self-contained (serialized by `chrome.scripting`); unit
+   tests rebuild it from its own source to enforce this, under jsdom.
 
 ## Capture pipeline
 
@@ -71,15 +81,19 @@ For each event:
    duplicate events LinkedIn's SPA fires for one navigation; captures are
    short-lived so in-memory is sufficient even though the service worker is
    ephemeral).
-2. **Settle.** Wait ~1.5 s, then verify the tab still shows the same slug
-   (user may have navigated on). Abort silently if not.
+2. **Wait until ready.** Yield ~0.5 s so the SPA route swap begins, verify
+   the tab still shows the same slug (abort silently if not), then run the
+   readiness watch: profile name present, then DOM quiet for ~600 ms, capped
+   at 12 s (a cap expiry logs and proceeds). Re-verify the slug.
 3. **Auto-scroll.** `chrome.scripting.executeScript` injects an async
    function: step down by ~80% of the viewport every ~300 ms until the
    scroll height stops growing and the bottom is reached, hard cap 30 s,
    then restore the original scroll position. This is what forces lazy
    sections and images into the DOM so the MHTML contains them. Expanding
    "see more" buttons is out of scope.
-4. **Settle again** ~1 s; re-verify the slug.
+4. **Wait until ready again** — the scroll just triggered lazy loads; run the
+   readiness watch with no selector (DOM quiet ~750 ms, capped at 10 s);
+   re-verify the slug.
 5. **Capture.** `chrome.pageCapture.saveAsMHTML({ tabId })` → MHTML `Blob`
    of the page as currently rendered. No debugger, no banner.
 6. **Save.** MV3 service workers cannot use `URL.createObjectURL`, so:
@@ -124,8 +138,10 @@ For each event:
 manifest.json
 background.js
 lib/profile.js
+lib/readiness.js
 tests/profile.test.js
-package.json          # dev-only: vitest
+tests/readiness.test.js
+package.json          # dev-only: vitest + jsdom
 docs/superpowers/specs/2026-08-27-linkedin-capture-extension-design.md
 ```
 
@@ -135,6 +151,9 @@ docs/superpowers/specs/2026-08-27-linkedin-capture-extension-design.md
   string, hash, regional hosts, percent-encoded/unicode slugs, detail and
   overlay subpaths rejected, non-profile paths rejected), slug sanitization
   edge cases, filename format (`.mhtml`), dedup logic across day boundaries.
+- **Unit (vitest + jsdom):** `lib/readiness.js` — resolves on quiet DOM,
+  holds while mutations continue, `ready:false` at the cap, late-appearing
+  selector, body fallback, and serialization self-containment.
 - **Manual E2E checklist (load unpacked):** first visit saves an `.mhtml`
   file to `Downloads/linkedin-profiles/` with the correct name; opening it
   in Chrome shows the full profile including below-the-fold sections and
