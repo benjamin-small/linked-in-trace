@@ -1,3 +1,10 @@
+import {
+  profileSlugFromUrl,
+  captureFilename,
+  localDateString,
+  shouldCapture,
+} from "./lib/profile.js";
+
 const BADGE_FLASH_MS = 3000;
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -37,4 +44,113 @@ async function flashBadge(tabId, text) {
   } catch {
     // tab gone before we could set the badge
   }
+}
+
+const SETTLE_AFTER_NAV_MS = 1500;
+const SETTLE_AFTER_SCROLL_MS = 1000;
+
+// Absorbs the duplicate events LinkedIn's SPA fires for one navigation.
+// In-memory is sufficient: captures are short-lived relative to worker life.
+const inFlight = new Set();
+
+const navFilter = { url: [{ hostSuffix: "linkedin.com", pathPrefix: "/in/" }] };
+chrome.webNavigation.onCompleted.addListener(onProfileNavigation, navFilter);
+chrome.webNavigation.onHistoryStateUpdated.addListener(onProfileNavigation, navFilter);
+
+async function onProfileNavigation({ tabId, url, frameId }) {
+  if (frameId !== 0) return; // main frame only
+  const slug = profileSlugFromUrl(url);
+  if (!slug) return;
+
+  const { enabled, savedProfiles } = await chrome.storage.local.get({
+    enabled: true,
+    savedProfiles: {},
+  });
+  if (!enabled) return;
+  if (!shouldCapture(slug, savedProfiles, localDateString(new Date()))) return;
+
+  const key = `${tabId}:${slug}`;
+  if (inFlight.has(key)) return;
+  inFlight.add(key);
+  try {
+    await captureProfile(tabId, slug);
+  } catch (err) {
+    console.error(`linked-in-trace: capture failed for ${slug}:`, err);
+    await flashBadge(tabId, "✗");
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+async function captureProfile(tabId, slug) {
+  await sleep(SETTLE_AFTER_NAV_MS);
+  if (!(await tabStillOnProfile(tabId, slug))) return;
+
+  await chrome.scripting.executeScript({ target: { tabId }, func: autoScrollPage });
+
+  await sleep(SETTLE_AFTER_SCROLL_MS);
+  if (!(await tabStillOnProfile(tabId, slug))) return;
+
+  const blob = await chrome.pageCapture.saveAsMHTML({ tabId });
+  const dataUrl = await blobToDataUrl(blob);
+
+  const now = new Date();
+  await chrome.downloads.download({
+    url: dataUrl,
+    filename: captureFilename(slug, now),
+    saveAs: false,
+    conflictAction: "uniquify",
+  });
+
+  // Success only: record so failures retry on the next visit.
+  const { savedProfiles } = await chrome.storage.local.get({ savedProfiles: {} });
+  savedProfiles[slug] = localDateString(now);
+  await chrome.storage.local.set({ savedProfiles });
+  await flashBadge(tabId, "✓");
+}
+
+async function tabStillOnProfile(tabId, slug) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    // tab.url is visible to us only on *.linkedin.com (host_permissions);
+    // elsewhere it is undefined, which correctly reads as "navigated away".
+    return profileSlugFromUrl(tab.url ?? "") === slug;
+  } catch {
+    return false; // tab closed
+  }
+}
+
+// Injected into the page. Must stay self-contained: no closures over
+// worker-side variables.
+async function autoScrollPage() {
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const startX = window.scrollX;
+  const startY = window.scrollY;
+  const deadline = Date.now() + 30000;
+  let lastHeight = 0;
+  while (Date.now() < deadline) {
+    const doc = document.scrollingElement || document.documentElement;
+    const atBottom = window.scrollY + window.innerHeight >= doc.scrollHeight - 2;
+    if (atBottom && doc.scrollHeight === lastHeight) break;
+    lastHeight = doc.scrollHeight;
+    window.scrollBy(0, Math.max(200, Math.floor(window.innerHeight * 0.8)));
+    await pause(300);
+  }
+  window.scrollTo(startX, startY);
+  await pause(200);
+}
+
+async function blobToDataUrl(blob) {
+  // MV3 service workers have no URL.createObjectURL; go via base64.
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  const CHUNK = 0x8000; // avoid call-stack limits on fromCharCode
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:application/x-mimearchive;base64,${btoa(binary)}`;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
