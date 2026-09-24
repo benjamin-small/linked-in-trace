@@ -1,7 +1,9 @@
 # linked-in-trace
 
-A Chrome add-on that automatically saves a copy of every LinkedIn profile you
-look at, onto your own computer.
+linked-in-trace is a Chrome extension that automatically saves a copy of every
+LinkedIn profile you look at onto your own computer. Its purpose is to build a
+private, dated history without uploading the captured profiles to another
+service.
 
 ## What it does
 
@@ -22,7 +24,7 @@ look at, onto your own computer.
 
 ## How to install it
 
-You need Google Chrome (any version from the last few years).
+You need Google Chrome 116 or newer.
 
 1. Download the newest version from
    <https://github.com/benjamin-small/linked-in-trace/releases/latest> —
@@ -46,7 +48,7 @@ will briefly scroll down and back by itself — that's normal, it's making
 sure everything has loaded. A small **✓** flashes on the icon, and the file
 appears in Downloads → linkedin-profiles.
 
-## Day-to-day
+## Usage
 
 You don't need to do anything. The little marks on the icon mean:
 
@@ -66,7 +68,13 @@ the Downloads folder, the linkedin-profiles folder will be there instead.
 
 ## For developers
 
-`npm install` then `npm test` runs the unit tests (vitest; the readiness
-tests run under jsdom). No build step — edit files and hit Reload on
-`chrome://extensions`. Design doc:
+Development requires Node.js 22 or newer. Run `npm ci`, then `npm test`; the
+readiness tests run under jsdom. There is no build step—edit files and select
+**Reload** on `chrome://extensions`.
+
+Use `npm run coverage` for the measured report. See
+[`docs/testing.md`](docs/testing.md) for current coverage and test scope,
+[`docs/configuration.md`](docs/configuration.md) for stored settings and
+permissions, and [`docs/licensing.md`](docs/licensing.md) for the current
+licensing status. The design is documented in
 `docs/superpowers/specs/2026-08-27-linkedin-capture-extension-design.md`.
